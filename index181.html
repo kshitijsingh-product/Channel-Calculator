@@ -1,0 +1,989 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SIP channel estimator</title>
+<meta name="description" content="Estimate how many SIP channels a dialer campaign needs to place a given number of call attempts in a time window.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&family=Chakra+Petch:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #E9EDF2;
+    --dot: rgba(19, 32, 46, 0.075);
+    --surface: #FFFFFF;
+    --ink: #13202E;
+    --muted: #5B6878;
+    --line: #D3DAE2;
+    --field: #F5F7FA;
+    --accent: #2A62D4;
+    --accent-solid: #2A62D4;
+    --focus-ring: rgba(42, 98, 212, 0.22);
+    --track: #D3DAE2;
+    --amber: #E8A21A;
+    --ok: #2E8B57;
+    --ok-ring: rgba(46, 139, 87, 0.18);
+    --warn: #C2531F;
+    --warn-ring: rgba(194, 83, 31, 0.18);
+    --shadow: 0 18px 40px -26px rgba(19, 32, 46, 0.45);
+    --device-border: #2C3846;
+
+    --font: "Barlow", "Helvetica Neue", Arial, sans-serif;
+    --font-cond: "Barlow Semi Condensed", "Barlow", "Arial Narrow", Arial, sans-serif;
+    --font-readout: "Chakra Petch", "Barlow Semi Condensed", "Arial Narrow", sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #0E141B;
+      --dot: rgba(255, 255, 255, 0.035);
+      --surface: #161F29;
+      --ink: #E6EDF4;
+      --muted: #93A3B4;
+      --line: #2A3644;
+      --field: #111922;
+      --accent: #7AAAF5;
+      --accent-solid: #2F6BD8;
+      --focus-ring: rgba(122, 170, 245, 0.28);
+      --track: #2A3644;
+      --amber: #F1B23A;
+      --ok: #63C08D;
+      --ok-ring: rgba(99, 192, 141, 0.2);
+      --warn: #F08C62;
+      --warn-ring: rgba(240, 140, 98, 0.2);
+      --shadow: 0 18px 40px -24px rgba(0, 0, 0, 0.75);
+      --device-border: #3A4757;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--bg);
+    background-image: radial-gradient(var(--dot) 1px, transparent 1.4px);
+    background-size: 22px 22px;
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+
+  .page {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: clamp(2rem, 6vw, 4.5rem) clamp(1rem, 4vw, 2rem) 3.5rem;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  /* Header */
+  .intro { max-width: 46rem; }
+
+  .intro h1 {
+    font-family: var(--font-cond);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 3.75rem);
+    line-height: 1.02;
+    letter-spacing: -0.015em;
+    margin: 0 0 0.75rem;
+  }
+
+  .intro p {
+    margin: 0;
+    max-width: 58ch;
+    color: var(--muted);
+    font-size: 1.125rem;
+  }
+
+  /* Layout */
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 1.75rem;
+    align-items: start;
+    margin-top: 2.5rem;
+  }
+
+  @media (max-width: 880px) {
+    .grid { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  /* Form card */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    padding: clamp(1.35rem, 3vw, 2rem);
+  }
+
+  .card h2 {
+    font-family: var(--font-cond);
+    font-weight: 600;
+    font-size: 1.375rem;
+    margin: 0 0 1.5rem;
+  }
+
+  .field + .field { margin-top: 1.5rem; }
+
+  .field label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.45rem;
+  }
+
+  .control {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--field);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  .control:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px var(--focus-ring);
+  }
+
+  .control.invalid { border-color: var(--warn); }
+  .control.invalid:focus-within { box-shadow: 0 0 0 4px var(--warn-ring); }
+
+  .control input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    font-family: var(--font-cond);
+    font-weight: 600;
+    font-size: 1.3rem;
+    line-height: 1.2;
+    padding: 0.8rem 0.95rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .control input:focus { outline: none; }
+
+  #talk { -moz-appearance: textfield; appearance: textfield; }
+  #talk::-webkit-outer-spin-button,
+  #talk::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .unit {
+    display: flex;
+    align-items: center;
+    padding: 0 1rem;
+    border-left: 1px solid var(--line);
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 0.9375rem;
+  }
+
+  .hint, .error {
+    margin: 0.45rem 0 0;
+    font-size: 0.875rem;
+  }
+
+  .hint { color: var(--muted); }
+
+  .error {
+    color: var(--warn);
+    font-weight: 500;
+  }
+
+  /* Answer rate slider */
+  .range {
+    --fill: 19%;
+    display: block;
+    width: 100%;
+    height: 1.5rem;
+    margin: 0.65rem 0 0;
+    background: transparent;
+    -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
+  }
+
+  .range::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(to right, var(--accent) var(--fill), var(--track) var(--fill));
+  }
+
+  .range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    margin-top: -7px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px solid var(--accent);
+    box-shadow: 0 2px 6px rgba(19, 32, 46, 0.25);
+  }
+
+  .range::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--track);
+  }
+
+  .range::-moz-range-progress {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--accent);
+  }
+
+  .range::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px solid var(--accent);
+    box-shadow: 0 2px 6px rgba(19, 32, 46, 0.25);
+  }
+
+  /* Device panel */
+  .device {
+    position: relative;
+    color: #E8EEF5;
+    border: 1px solid var(--device-border);
+    border-radius: 18px;
+    padding: 1.6rem clamp(1.35rem, 3.5vw, 2.25rem) 1.6rem;
+    background:
+      radial-gradient(circle, #6A7889 0 1.5px, #2A3440 2px 3.6px, transparent 4px) left 12px top 12px / 10px 10px no-repeat,
+      radial-gradient(circle, #6A7889 0 1.5px, #2A3440 2px 3.6px, transparent 4px) right 12px top 12px / 10px 10px no-repeat,
+      radial-gradient(circle, #6A7889 0 1.5px, #2A3440 2px 3.6px, transparent 4px) left 12px bottom 12px / 10px 10px no-repeat,
+      radial-gradient(circle, #6A7889 0 1.5px, #2A3440 2px 3.6px, transparent 4px) right 12px bottom 12px / 10px 10px no-repeat,
+      repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 3px),
+      linear-gradient(165deg, #222D3A 0%, #171F29 55%, #121820 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.07),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+      0 26px 50px -28px rgba(10, 20, 34, 0.7);
+  }
+
+  .device-top {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding-bottom: 1rem;
+    margin-bottom: 1.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .pilot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4ADE80;
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.8);
+  }
+
+  .page.empty .pilot {
+    background: #4B5664;
+    box-shadow: none;
+  }
+
+  .device-top h2 {
+    margin: 0;
+    font-family: var(--font-readout);
+    font-weight: 500;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+    color: #A3B3C5;
+  }
+
+  .lead {
+    margin: 0;
+    color: #A3B3C5;
+    font-size: 1.0625rem;
+  }
+
+  .count {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.1rem 0.75rem;
+    margin: 0.1rem 0 0.4rem;
+  }
+
+  .count .num {
+    font-family: var(--font-readout);
+    font-weight: 700;
+    font-size: clamp(4rem, 11vw, 6.5rem);
+    line-height: 0.95;
+    letter-spacing: -0.01em;
+    color: #FFC145;
+    text-shadow: 0 0 22px rgba(255, 176, 32, 0.38);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .count .label {
+    font-family: var(--font-cond);
+    font-weight: 500;
+    font-size: clamp(1.3rem, 3vw, 1.8rem);
+    color: #E8EEF5;
+  }
+
+  .summary {
+    margin: 0;
+    color: #A3B3C5;
+  }
+
+  .empty-msg {
+    margin: 0.5rem 0 0;
+    color: #A3B3C5;
+    font-size: 1.0625rem;
+  }
+
+  .page:not(.empty) .empty-msg { display: none; }
+  .page.empty .needs-result { display: none; }
+
+  .led-window {
+    margin-top: 1.6rem;
+    padding: 14px;
+    border-radius: 12px;
+    background: #0B1016;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.65), 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .lamps {
+    display: grid;
+    grid-template-columns: repeat(20, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .lamp {
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background-color: #1E2833;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .lamp.load,
+  .lamp.buffer {
+    background-image: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.6), transparent 46%);
+  }
+
+  .lamp.load {
+    background-color: #FFB020;
+    box-shadow: 0 0 7px rgba(255, 176, 32, 0.6);
+  }
+
+  .lamp.buffer {
+    background-color: #4FA3FF;
+    box-shadow: 0 0 7px rgba(79, 163, 255, 0.55);
+  }
+
+  .lamp.cps {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 1.5px #8593A3;
+  }
+
+  .lamps.boot .lamp {
+    animation: led-on 0.45s ease-out both;
+    animation-delay: calc(var(--i, 0) * 6ms);
+  }
+
+  @media (max-width: 480px) {
+    .led-window { padding: 10px; }
+    .lamps { gap: 4px; }
+  }
+
+  @keyframes led-on {
+    from { opacity: 0; transform: scale(0.35); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  .legend {
+    list-style: none;
+    margin: 1.1rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem 1.4rem;
+    font-size: 0.9375rem;
+    color: #D3DCE6;
+  }
+
+  .legend li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .legend li[hidden] { display: none; }
+
+  .swatch {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    flex: none;
+  }
+
+  .swatch.load { background: #FFB020; box-shadow: 0 0 6px rgba(255, 176, 32, 0.6); }
+  .swatch.buffer { background: #4FA3FF; box-shadow: 0 0 6px rgba(79, 163, 255, 0.55); }
+  .swatch.cps { box-shadow: inset 0 0 0 1.5px #8593A3; }
+
+  .scale {
+    margin: 0.5rem 0 0;
+    color: #8697AA;
+    font-size: 0.875rem;
+  }
+
+  /* CPS status */
+  .status {
+    display: flex;
+    gap: 0.9rem;
+    align-items: flex-start;
+    margin-top: 1rem;
+    padding: 1rem 1.2rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    font-size: 0.9375rem;
+  }
+
+  .status .dot {
+    flex: none;
+    width: 0.65rem;
+    height: 0.65rem;
+    margin-top: 0.42rem;
+    border-radius: 50%;
+  }
+
+  .status.ok .dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-ring); }
+  .status.raised .dot { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-ring); }
+
+  .status strong {
+    display: block;
+    margin-bottom: 0.1rem;
+    font-size: 1rem;
+  }
+
+  .status.ok strong { color: var(--ok); }
+  .status.raised strong { color: var(--warn); }
+
+  /* Calculation chain */
+  .chain { margin-top: 3rem; }
+
+  .chain h2 {
+    font-family: var(--font-cond);
+    font-weight: 600;
+    font-size: 1.5rem;
+    margin: 0 0 1.1rem;
+  }
+
+  .chain-list {
+    position: relative;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.85rem;
+  }
+
+  .chain-list::before {
+    content: "";
+    position: absolute;
+    left: 2rem;
+    right: 2rem;
+    top: calc(1.1rem + 0.9rem);
+    height: 2px;
+    background: linear-gradient(90deg, var(--amber), var(--accent));
+  }
+
+  .node {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 1.1rem 1.1rem 1.2rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+  }
+
+  .node-num {
+    display: grid;
+    place-items: center;
+    width: 1.8rem;
+    height: 1.8rem;
+    margin-bottom: 0.5rem;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: var(--field);
+    font-family: var(--font-readout);
+    font-weight: 600;
+    font-size: 0.875rem;
+  }
+
+  .node-label {
+    font-weight: 600;
+    font-size: 0.9375rem;
+    min-height: 3em;
+  }
+
+  .node-val {
+    font-family: var(--font-readout);
+    font-weight: 600;
+    font-size: 1.55rem;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .node-unit {
+    font-family: var(--font);
+    font-weight: 500;
+    font-size: 0.875rem;
+    color: var(--muted);
+    margin-left: 0.25rem;
+  }
+
+  .node-calc {
+    margin-top: 0.2rem;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    overflow-wrap: anywhere;
+  }
+
+  .node.total {
+    background: var(--accent-solid);
+    border-color: var(--accent-solid);
+    color: #FFFFFF;
+  }
+
+  .node.total .node-num {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: transparent;
+  }
+
+  .node.total .node-calc,
+  .node.total .node-unit { color: rgba(255, 255, 255, 0.82); }
+
+  @media (max-width: 960px) {
+    .chain-list { grid-template-columns: minmax(0, 1fr); }
+
+    .chain-list::before {
+      left: calc(1.1rem + 0.9rem);
+      right: auto;
+      top: 1.5rem;
+      bottom: 1.5rem;
+      width: 2px;
+      height: auto;
+      background: linear-gradient(180deg, var(--amber), var(--accent));
+    }
+
+    .node {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      column-gap: 1rem;
+      align-items: center;
+    }
+
+    .node-num { grid-row: 1 / span 2; margin: 0; }
+    .node-label { grid-column: 2; min-height: 0; }
+    .node-calc { grid-column: 2; margin: 0; }
+    .node-val { grid-column: 3; grid-row: 1 / span 2; text-align: right; white-space: nowrap; }
+  }
+
+  .burst {
+    margin: 1.25rem 0 0;
+    max-width: 70ch;
+    color: var(--muted);
+  }
+
+  /* Assumptions */
+  .assumptions {
+    margin-top: 3rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--line);
+    max-width: 72ch;
+  }
+
+  .assumptions h2 {
+    font-family: var(--font-cond);
+    font-weight: 600;
+    font-size: 1.125rem;
+    margin: 0 0 0.35rem;
+  }
+
+  .assumptions p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.9375rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lamps.boot .lamp { animation: none; }
+    .lamp, .control { transition: none; }
+  }
+</style>
+</head>
+<body>
+<main class="page" id="page">
+  <header class="intro">
+    <h1>SIP channel estimator</h1>
+    <p>Find out how many SIP channels your dialer needs to place a set number of call attempts in a time window. The estimate updates as you type.</p>
+  </header>
+
+  <div class="grid">
+    <form class="card" id="form" novalidate>
+      <h2>Your campaign</h2>
+
+      <div class="field">
+        <label for="x">Call attempts</label>
+        <div class="control">
+          <input id="x" type="number" inputmode="numeric" min="1" step="1" value="10000" aria-describedby="x-hint x-error">
+          <span class="unit">calls</span>
+        </div>
+        <p class="hint" id="x-hint">Total calls you want to attempt in the given time window.</p>
+        <p class="error" id="x-error" hidden></p>
+      </div>
+
+      <div class="field">
+        <label for="t">Time window</label>
+        <div class="control">
+          <input id="t" type="number" inputmode="decimal" min="1" step="1" value="60" aria-describedby="t-hint t-error">
+          <span class="unit">min</span>
+        </div>
+        <p class="hint" id="t-hint">Time window in which you want to make all the call attempts.</p>
+        <p class="error" id="t-error" hidden></p>
+      </div>
+
+      <div class="field">
+        <label for="a">Expected answer rate</label>
+        <div class="control">
+          <input id="a" type="number" inputmode="decimal" min="0.1" max="100" step="0.1" value="20" aria-describedby="a-error">
+          <span class="unit">%</span>
+        </div>
+        <input class="range" id="a-range" type="range" min="1" max="100" step="1" value="20" tabindex="-1" aria-hidden="true">
+        <p class="error" id="a-error" hidden></p>
+      </div>
+
+      <div class="field">
+        <label for="talk">Average talk time</label>
+        <div class="control">
+          <input id="talk" type="number" inputmode="decimal" min="0" step="1" value="60" aria-describedby="talk-hint talk-error">
+          <span class="unit">sec</span>
+        </div>
+        <p class="hint" id="talk-hint">How long an answered call lasts, on average.</p>
+        <p class="error" id="talk-error" hidden></p>
+      </div>
+    </form>
+
+    <div class="result-col">
+      <section class="device" aria-labelledby="result-title">
+        <div class="device-top">
+          <span class="pilot" aria-hidden="true"></span>
+          <h2 id="result-title">Channel estimate</h2>
+        </div>
+
+        <p class="empty-msg">Fill in all four fields to see how many channels you need.</p>
+        <p class="visually-hidden" aria-live="polite" id="sr-result"></p>
+
+        <div class="needs-result" aria-hidden="true">
+          <p class="lead">You need</p>
+          <p class="count">
+            <span class="num" id="channels">0</span>
+            <span class="label" id="channels-label">SIP channels</span>
+          </p>
+          <p class="summary" id="summary"></p>
+        </div>
+
+        <div class="led-window">
+          <div class="lamps" id="lamps" role="img"></div>
+        </div>
+
+        <div class="needs-result">
+          <ul class="legend">
+            <li><span class="swatch load"></span><span id="lg-load"></span></li>
+            <li><span class="swatch buffer"></span><span id="lg-buffer"></span></li>
+            <li id="lg-cps-item" hidden><span class="swatch cps"></span><span id="lg-cps"></span></li>
+          </ul>
+          <p class="scale" id="scale"></p>
+        </div>
+      </section>
+
+      <div class="status needs-result" id="cps-status"></div>
+    </div>
+  </div>
+
+  <section class="chain needs-result" aria-labelledby="chain-title">
+    <h2 id="chain-title">How this was worked out</h2>
+    <ol class="chain-list">
+      <li class="node">
+        <span class="node-num" aria-hidden="true">1</span>
+        <span class="node-label">Call rate</span>
+        <span class="node-val"><span id="s-rate"></span><span class="node-unit">calls/sec</span></span>
+        <span class="node-calc" id="s-rate-calc"></span>
+      </li>
+      <li class="node">
+        <span class="node-num" aria-hidden="true">2</span>
+        <span class="node-label">Channel time per attempt</span>
+        <span class="node-val"><span id="s-hold"></span><span class="node-unit">sec</span></span>
+        <span class="node-calc" id="s-hold-calc"></span>
+      </li>
+      <li class="node">
+        <span class="node-num" aria-hidden="true">3</span>
+        <span class="node-label">Channels busy on average</span>
+        <span class="node-val" id="s-busy"></span>
+        <span class="node-calc" id="s-busy-calc"></span>
+      </li>
+      <li class="node">
+        <span class="node-num" aria-hidden="true">4</span>
+        <span class="node-label">Buffer for swings in call volume</span>
+        <span class="node-val" id="s-buffer"></span>
+        <span class="node-calc" id="s-buffer-calc"></span>
+      </li>
+      <li class="node total">
+        <span class="node-num" aria-hidden="true">5</span>
+        <span class="node-label">Channels needed</span>
+        <span class="node-val" id="s-total"></span>
+        <span class="node-calc" id="s-total-calc"></span>
+      </li>
+    </ol>
+    <p class="burst" id="burst"></p>
+  </section>
+
+  <section class="assumptions">
+    <h2>Assumptions</h2>
+    <p>Answered calls ring for 15 seconds before pickup. Unanswered attempts hold a channel for 30 seconds. Call setup time is ignored. The buffer covers normal swings in call volume about 98% of the time. Telco CPS is taken as 4% of your channels, the low end of the usual 4–8% range.</p>
+  </section>
+</main>
+
+<script>
+(() => {
+  const RING_ANSWERED = 15;    // sec of ringing before an answered call is picked up
+  const RING_UNANSWERED = 30;  // sec an unanswered attempt holds a channel
+  const K = 2;                 // buffer factor, covers ~98% of moments
+  const CPS_SHARE = 0.04;      // telco CPS as a share of channels (low end of 4–8%)
+  const BURST_SHARE = 0.08;    // high end of the range, used for the burst-safe figure
+  const MAX_LAMPS = 200;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n, min = 0, max = min) =>
+    n.toLocaleString(undefined, { minimumFractionDigits: min, maximumFractionDigits: max });
+  const plural = (n, one, many) => (n === 1 ? one : many);
+
+  const page = $('page');
+  const lampsEl = $('lamps');
+  const range = $('a-range');
+
+  const fields = {
+    x:    { check: (v) => v > 0,             msg: 'Enter a number of calls greater than 0.' },
+    t:    { check: (v) => v > 0,             msg: 'Enter a window longer than 0 minutes.' },
+    a:    { check: (v) => v > 0 && v <= 100, msg: 'Enter a rate above 0% and up to 100%.' },
+    talk: { check: (v) => v >= 0,            msg: 'Enter 0 or more seconds.' },
+  };
+  const touched = new Set();
+
+  function read(id) {
+    const input = $(id);
+    const raw = input.value.trim();
+    const value = raw === '' ? NaN : Number(raw);
+    const valid = Number.isFinite(value) && fields[id].check(value);
+    const showError = !valid && (raw !== '' || touched.has(id) || input.validity.badInput);
+    input.setAttribute('aria-invalid', String(showError));
+    input.closest('.control').classList.toggle('invalid', showError);
+    const err = $(id + '-error');
+    err.textContent = showError ? fields[id].msg : '';
+    err.hidden = !showError;
+    return valid ? value : null;
+  }
+
+  function syncRange(rate) {
+    const v = Math.min(100, Math.max(1, rate));
+    range.value = String(v);
+    range.style.setProperty('--fill', ((v - 1) / 99) * 100 + '%');
+  }
+
+  // Lamps are kept as persistent elements so colour changes fade instead of blinking.
+  function setLamps(classes) {
+    while (lampsEl.children.length < classes.length) {
+      const lamp = document.createElement('span');
+      lamp.className = 'lamp';
+      lamp.style.setProperty('--i', lampsEl.children.length);
+      lampsEl.appendChild(lamp);
+    }
+    while (lampsEl.children.length > classes.length) lampsEl.lastElementChild.remove();
+    classes.forEach((cls, i) => {
+      lampsEl.children[i].className = cls ? 'lamp ' + cls : 'lamp';
+    });
+  }
+
+  function drawLamps(E, base, C) {
+    const unit = C <= MAX_LAMPS ? 1 : Math.ceil(C / MAX_LAMPS);
+    const total = Math.ceil(C / unit);
+    const load = Math.min(total, Math.round(E / unit));
+    const buf = Math.max(0, Math.min(total, Math.ceil(base / unit)) - load);
+
+    const classes = [];
+    for (let i = 0; i < total; i++) {
+      classes.push(i < load ? 'load' : i < load + buf ? 'buffer' : 'cps');
+    }
+    setLamps(classes);
+
+    const busy = Math.round(E);
+    const spare = base - busy;
+    const extra = C - base;
+
+    $('lg-load').textContent = `${fmt(busy)} busy on average`;
+    $('lg-buffer').textContent = `${fmt(spare)} buffer`;
+    $('lg-cps-item').hidden = extra <= 0;
+    $('lg-cps').textContent = `${fmt(extra)} added to reach the CPS you need`;
+
+    $('scale').textContent = unit === 1
+      ? 'Each lamp is one channel.'
+      : `Each lamp is ${fmt(unit)} channels.`;
+
+    lampsEl.setAttribute('aria-label',
+      `${fmt(C)} channels: about ${fmt(busy)} busy on average, ${fmt(spare)} buffer` +
+      (extra > 0 ? `, ${fmt(extra)} added for CPS.` : '.'));
+  }
+
+  let current = 0;
+  let raf = 0;
+  function showCount(to, duration) {
+    const el = $('channels');
+    cancelAnimationFrame(raf);
+    if (reduceMotion) {
+      current = to;
+      el.textContent = fmt(to);
+      return;
+    }
+    const from = current;
+    const start = performance.now();
+    const tick = (now) => {
+      const p = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      current = Math.round(from + (to - from) * eased);
+      el.textContent = fmt(current);
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+  }
+
+  let booted = false;
+
+  function update() {
+    const X = read('x');
+    const T = read('t');
+    const Ap = read('a');
+    const talk = read('talk');
+
+    if (Ap !== null) syncRange(Ap);
+
+    if ([X, T, Ap, talk].includes(null)) {
+      page.classList.add('empty');
+      setLamps(new Array(lampsEl.children.length || 100).fill(''));
+      lampsEl.setAttribute('aria-label', 'No estimate yet.');
+      $('sr-result').textContent = '';
+      return;
+    }
+    page.classList.remove('empty');
+
+    const A = Ap / 100;
+    const lambda = X / (60 * T);                                        // attempts per second
+    const H = A * (RING_ANSWERED + talk) + (1 - A) * RING_UNANSWERED;   // sec per attempt
+    const E = lambda * H;                                               // average busy channels
+    const buffer = K * Math.sqrt(E);
+    const base = Math.ceil(E + buffer);
+    const cpsFloor = Math.ceil(lambda / CPS_SHARE);
+    const cpsOk = lambda <= CPS_SHARE * base;
+    const C = cpsOk ? base : cpsFloor;
+    const burstSafe = Math.max(Math.ceil((E + buffer) / (1 - 2 * BURST_SHARE)), cpsFloor);
+
+    showCount(C, booted ? 380 : 1100);
+    $('channels-label').textContent = plural(C, 'SIP channel', 'SIP channels');
+    const summary =
+      `to place ${fmt(X)} call ${plural(X, 'attempt', 'attempts')} in ${fmt(T, 0, 1)} ${plural(T, 'minute', 'minutes')}.`;
+    $('summary').textContent = summary;
+    $('sr-result').textContent = `You need ${fmt(C)} ${plural(C, 'SIP channel', 'SIP channels')} ${summary}`;
+
+    $('s-rate').textContent = fmt(lambda, 2);
+    $('s-rate-calc').textContent = `${fmt(X)} ÷ (${fmt(T, 0, 1)} min × 60 sec)`;
+    $('s-hold').textContent = fmt(H, 1);
+    $('s-hold-calc').textContent =
+      `${fmt(Ap, 0, 1)}% × (15 + ${fmt(talk, 0, 1)} sec) + ${fmt(100 - Ap, 0, 1)}% × 30 sec`;
+    $('s-busy').textContent = fmt(E, 1);
+    $('s-busy-calc').textContent = `${fmt(lambda, 2)} calls/sec × ${fmt(H, 1)} sec`;
+    $('s-buffer').textContent = fmt(buffer, 1);
+    $('s-buffer-calc').textContent = `2 × √${fmt(E, 1)}`;
+    $('s-total').textContent = fmt(base);
+    $('s-total-calc').textContent = `${fmt(E, 1)} + ${fmt(buffer, 1)}, rounded up`;
+
+    const status = $('cps-status');
+    if (cpsOk) {
+      status.className = 'status needs-result ok';
+      status.innerHTML =
+        `<span class="dot" aria-hidden="true"></span><div><strong>CPS check passed</strong>` +
+        `Your campaign needs ${fmt(lambda, 2)} calls per second. ` +
+        `${fmt(base)} channels at 4% give about ${fmt(CPS_SHARE * base, 1)} CPS.</div>`;
+    } else {
+      status.className = 'status needs-result raised';
+      status.innerHTML =
+        `<span class="dot" aria-hidden="true"></span><div><strong>Raised to reach the CPS you need</strong>` +
+        `Your campaign needs ${fmt(lambda, 2)} calls per second, but ${fmt(base)} channels at 4% give only ` +
+        `${fmt(CPS_SHARE * base, 1)} CPS. ${fmt(C)} channels give ${fmt(CPS_SHARE * C, 1)} CPS. ` +
+        `You could also ask your telco for more CPS per channel.</div>`;
+    }
+
+    $('burst').textContent =
+      `Your dialer fires calls in 8-second batches. To absorb those bursts as well, plan for ${fmt(burstSafe)} channels.`;
+
+    if (!booted && !reduceMotion) {
+      lampsEl.classList.add('boot');
+      setTimeout(() => lampsEl.classList.remove('boot'), 1800);
+    }
+    drawLamps(E, base, C);
+    booted = true;
+  }
+
+  const form = $('form');
+  form.addEventListener('input', (e) => {
+    if (e.target === range) $('a').value = range.value;
+    update();
+  });
+  form.addEventListener('submit', (e) => e.preventDefault());
+  Object.keys(fields).forEach((id) => {
+    $(id).addEventListener('blur', () => { touched.add(id); update(); });
+  });
+
+  // Stop the mouse wheel from changing number fields; scroll the page instead.
+  form.querySelectorAll('input[type="number"]').forEach((input) => {
+    input.addEventListener('wheel', (e) => {
+      if (document.activeElement !== input) return;
+      e.preventDefault();
+      const scale = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
+      window.scrollBy(e.deltaX * scale, e.deltaY * scale);
+    }, { passive: false });
+  });
+
+  update();
+})();
+</script>
+</body>
+</html>
